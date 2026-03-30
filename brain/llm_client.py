@@ -1,57 +1,62 @@
 import os
-from collections.abc import Iterator
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# 加载 .env 文件中的环境变量
 load_dotenv()
 
-PLACEHOLDER_KEYWORDS = (
-    "在这里填入你的真实key",
-    "your_real_key",
-    "your_api_key",
-    "replace_me",
-    "your key",
-)
-
-
-def _is_placeholder_key(api_key: str | None) -> bool:
-    """判断 Key 是否为空或仍是占位符。"""
-    if not api_key or not api_key.strip():
-        return True
-    normalized = api_key.strip().lower()
-    return any(keyword in normalized for keyword in PLACEHOLDER_KEYWORDS)
-
-
-def ask_qwen_stream(messages: list) -> Iterator[str]:
-    """
-    将历史对话上下文发送给千问大模型，并流式返回回复片段。
-    """
+def get_client():
     api_key = os.getenv("DASHSCOPE_API_KEY")
-    if _is_placeholder_key(api_key):
-        yield "系统提示：大脑未连接，请先在 .env 文件中配置真实的千问 API Key 哦！"
-        return
-
-    client = OpenAI(
+    if not api_key or api_key == "在这里填入你的真实Key" or api_key.strip() == "":
+        return None
+    return OpenAI(
         api_key=api_key,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
 
+def ask_qwen_stream(messages: list):
+    """流式输出生成器，每次 yield 一个文字片段"""
+    client = get_client()
+    if not client:
+        yield "【系统拦截】：大脑未连接！请先在项目根目录的 .env 文件中配置真实的千问 API Key。"
+        return
+
     try:
-        stream = client.chat.completions.create(
-            model="qwen3.5-plus",  # 精准指定用户需要的 3.5-plus 模型
+        completion = client.chat.completions.create(
+            model="qwen3.5-plus",
             messages=messages,
-            stream=True
+            stream=True  # 开启流式输出
         )
-
-        has_content = False
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                has_content = True
-                yield delta
-
-        if not has_content:
-            yield "系统提示：大脑暂时没有返回内容，请稍后重试。"
+        for chunk in completion:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
     except Exception as e:
-        yield f"大脑连接异常：{str(e)}"
+        yield f"【大脑连接异常】：{str(e)}"
+
+def generate_chat_summary(messages: list) -> tuple[str, str]:
+    """后台悄悄调用的归档总结功能"""
+    client = get_client()
+    if not client or not messages:
+        return "未命名对话", "暂无摘要内容。"
+
+    prompt = (
+        "请阅读以下用户的聊天记录，并为其生成一个标题和摘要。\n"
+        "要求：\n"
+        "1. 标题不超过10个字。\n"
+        "2. 摘要不超过30个字，重点记录用户的偏好、事件或状态。\n"
+        "3. 必须严格按照以下格式返回，中间用竖线 '|' 隔开：\n"
+        "标题|摘要\n\n"
+        f"聊天记录：{str(messages)}"
+    )
+    try:
+        completion = client.chat.completions.create(
+            model="qwen3.5-plus",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        result = completion.choices[0].message.content.strip()
+        if "|" in result:
+            title, summary = result.split("|", 1)
+            return title.strip(), summary.strip()
+        return "会话归档", result[:30]
+    except:
+        return "归档失败", "摘要生成异常。"
