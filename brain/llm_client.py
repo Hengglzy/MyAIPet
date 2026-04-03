@@ -2,6 +2,7 @@ import os
 import httpx
 from openai import OpenAI
 from dotenv import load_dotenv
+from tools.functions import execute_tool
 
 load_dotenv()
 
@@ -24,22 +25,85 @@ def get_client():
     )
 
 
-# 【修复】：增加 model_name: str 参数
-def ask_qwen_stream(messages: list, model_name: str):
+def ask_qwen_stream(messages: list, model_name: str, tool_schemas: list = None):
     client = get_client()
     if not client:
         yield "【系统拦截】：大脑未连接！请检查 API Key。"
         return
 
     try:
+        request_kwargs = {
+            "model": model_name,
+            "messages": messages,
+            "stream": True,
+        }
+        if tool_schemas:
+            request_kwargs["tools"] = tool_schemas
+
         completion = client.chat.completions.create(
-            model=model_name,  # 动态使用菜单传入的模型
-            messages=messages,
-            stream=True,
+            **request_kwargs
         )
+
+        pending_tool_calls = {}
         for chunk in completion:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+            delta = chunk.choices[0].delta
+
+            if delta.content is not None:
+                yield delta.content
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in pending_tool_calls:
+                        pending_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc.id:
+                        pending_tool_calls[idx]["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        pending_tool_calls[idx]["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        pending_tool_calls[idx]["arguments"] += tc.function.arguments
+
+        if pending_tool_calls:
+            ordered_calls = [pending_tool_calls[i] for i in sorted(pending_tool_calls.keys())]
+
+            assistant_tool_calls = []
+            tool_result_messages = []
+            for call in ordered_calls:
+                tool_name = call["name"]
+                tool_args = call["arguments"]
+                tool_id = call["id"] or f"call_{tool_name}"
+
+                if tool_name == "get_current_time":
+                    yield "\n[⚙️ AIPet 007 正在偷偷看表...]\n"
+                elif tool_name == "web_search":
+                    yield "\n[⚙️ AIPet 007 正在疯狂敲键盘上网冲浪查资料...]\n"
+                else:
+                    yield f"\n[⚙️ AIPet 007 正在使用超能力: {tool_name}...]\n"
+
+                assistant_tool_calls.append(
+                    {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": tool_args},
+                    }
+                )
+
+                tool_result = execute_tool(tool_name, tool_args)
+                tool_result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_id,
+                        "name": tool_name,
+                        "content": tool_result,
+                    }
+                )
+
+            next_messages = messages + [
+                {"role": "assistant", "content": "", "tool_calls": assistant_tool_calls}
+            ] + tool_result_messages
+
+            yield from ask_qwen_stream(next_messages, model_name, tool_schemas)
+            return
     except Exception as e:
         yield f"【大脑连接异常】：{str(e)}"
 
