@@ -2,7 +2,7 @@ import os
 import httpx
 from openai import OpenAI
 from dotenv import load_dotenv
-from tools.functions import execute_tool
+from tools.registry import execute_tool
 
 load_dotenv()
 
@@ -77,6 +77,8 @@ def ask_qwen_stream(messages: list, model_name: str, tool_schemas: list = None):
                     yield "\n[⚙️ AIPet 007 正在偷偷看表...]\n"
                 elif tool_name == "web_search":
                     yield "\n[⚙️ AIPet 007 正在疯狂敲键盘上网冲浪查资料...]\n"
+                elif tool_name == "open_application":
+                    yield f"\n[⚙️ AIPet 007 正在接管鼠标，尝试帮您打开 {tool_args} ...]\n"
                 else:
                     yield f"\n[⚙️ AIPet 007 正在使用超能力: {tool_name}...]\n"
 

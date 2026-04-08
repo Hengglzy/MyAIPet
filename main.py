@@ -12,7 +12,7 @@ from database.models import (
     delete_session,
 )
 from brain.llm_client import ask_qwen_stream, generate_chat_summary
-from tools.functions import get_tool_schemas
+from tools.registry import get_tool_schemas
 from config.personas import PERSONAS
 
 
